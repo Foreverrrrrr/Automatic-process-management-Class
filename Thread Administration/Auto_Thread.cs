@@ -1,54 +1,51 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Threading;
+using System.Timers;
+using Thread_Administration;
 
 namespace Administration
 {
-    /// <summary>
-    /// 流程线程管理类
-    /// </summary>
     public abstract class Thread_Auto_Base
     {
-        /// <summary>
-        /// 流程阻塞句柄
-        /// </summary>
-        public abstract ManualResetEvent Interrupt { get; set; }
+        public static event Action<DateTime> NewClass_RunEvent;
 
-        /// <summary>
-        /// 流程日志事件
-        /// </summary>
-        public abstract event Action<DateTime, string> Run_LogEvent;
+        public static event Action<DateTime, string> DataConfigurationEvent;
 
-        /// <summary>
-        /// 流程线程管理创建事件
-        /// </summary>
-        public static event Action<DateTime> NewClass_Run;
+        private static object _lock = new object();
 
-        /// <summary>
-        /// 流程派生集合
-        /// </summary>
+        private static List<DataConfigurationBase> DataEnum = new List<DataConfigurationBase>();
+
+        private static bool[] DataPool = new bool[1024];
+
         public static System.Collections.Generic.List<ProductionThreadBase> Auto_Th { get; private set; } = new System.Collections.Generic.List<ProductionThreadBase>();
 
-        public Thread_Auto_Base()
-        {
+        public abstract ManualResetEvent Interrupt { get; set; }
 
+        public abstract event Action<DateTime, string> LogEvent;
+
+        public enum Send_Variable
+        {
+            Start, AwaitStarted, Suspend, Stop, Reset, E_Stop
         }
 
-        /// <summary>
-        /// 流程初始化
-        /// </summary>
-        /// <param name="spintime">中断时间（ms）</param>
+        public Thread_Auto_Base() { }
+
         public static void NewClass(int spintime = 50)
         {
+            DataStructureConfiguration(typeof(Send_Variable));
             Type baseType = typeof(Thread_Auto_Base);
             Assembly assembly = Assembly.GetEntryAssembly();
             Type[] derivedTypes = assembly.GetTypes().Where(t => t.IsSubclassOf(baseType)).ToArray();
             foreach (Type derivedType in derivedTypes)
             {
                 object instance = Activator.CreateInstance(derivedType);
-                MethodInfo[] methods = derivedType.GetMethods(BindingFlags.Public | BindingFlags.Instance);
+                MethodInfo[] methods = derivedType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance);
                 foreach (MethodInfo method in methods)
                 {
                     var t = method.GetCustomAttributes(typeof(ProductionThreadBase), inherit: true);
@@ -56,7 +53,7 @@ namespace Administration
                         Thread_Configuration(derivedType.Name, method, instance, spintime);
                 }
             }
-            NewClass_Run?.Invoke(DateTime.Now);
+            NewClass_RunEvent?.Invoke(DateTime.Now);
         }
 
         private static void Thread_Configuration(string class_na, MethodInfo method, object class_new, int spintime)
@@ -102,9 +99,6 @@ namespace Administration
             Auto_Th.Add(threadBase);
         }
 
-        /// <summary>
-        /// 流程取消
-        /// </summary>
         public static void Thraead_Dispose()
         {
             if (Auto_Th != null)
@@ -122,10 +116,6 @@ namespace Administration
                 }
         }
 
-        /// <summary>
-        /// 流程取消
-        /// </summary>
-        /// <param name="Thread_Name">流程名称</param>
         public static void Thraead_Dispose(string Thread_Name)
         {
             if (Auto_Th != null)
@@ -140,33 +130,97 @@ namespace Administration
                 }
         }
 
-        /// <summary>
-        /// 初始化流程
-        /// </summary>
-        /// <param name="thread"></param>
+        protected static void DataStructureConfiguration(Type @enum)
+        {
+            if (@enum.IsEnum)
+            {
+                string enumname = @enum.FullName;
+                DataConfigurationEvent?.Invoke(DateTime.Now, $"配置“{enumname}”加入数据池");
+                FieldInfo[] fields = @enum.GetFields(BindingFlags.Public | BindingFlags.Static);
+                if (fields.Length > 0)
+                {
+                    foreach (FieldInfo field in fields)
+                    {
+                        DataConfigurationBase configurationBase = new DataConfigurationBase()
+                        {
+                            EnumTypeName = enumname,
+                            EnumName = field.Name,
+                            EnumKey = DataEnum.Count,
+                        };
+                        DataPool[configurationBase.EnumKey] = false;
+                        DataEnum.Add(configurationBase);
+                    }
+                }
+                else
+                {
+                    throw new Exception("@enum中没有枚举项，无法创建全局数据池");
+                }
+            }
+            else
+            {
+                throw new Exception("@enum不是枚举类型，请检查@enum的类型");
+            }
+        }
+
+        public virtual void AwaitEnum<TEnum>(TEnum input, bool state, int time = 0) where TEnum : Enum
+        {
+            Type enumType = typeof(TEnum);
+            string enumTypeName = enumType.FullName;
+            var t = DataEnum.FirstOrDefault(x => x.EnumTypeName == enumTypeName && x.EnumName == input.ToString());
+            if (t != null)
+            {
+                DataConfigurationEvent?.Invoke(DateTime.Now, $"等待“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”");
+                Stopwatch stopwatch = new Stopwatch();
+                stopwatch.Start();
+                do
+                {
+                    this.Interrupt.WaitOne();
+                    Thread.Sleep(50);
+                    if (time > 0 && stopwatch.ElapsedMilliseconds > time)
+                        break;
+                } while (DataPool[t.EnumKey] != state);
+                DataConfigurationEvent?.Invoke(DateTime.Now, $"等待“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”完成（{stopwatch.ElapsedMilliseconds}）");
+            }
+        }
+
+        public virtual void SetEnum<TEnum>(TEnum input, bool state) where TEnum : Enum
+        {
+            Type enumType = typeof(TEnum);
+            string enumTypeName = enumType.FullName;
+            var t = DataEnum.FirstOrDefault(x => x.EnumTypeName == enumTypeName && x.EnumName == input.ToString());
+            if (t != null)
+            {
+                lock (_lock)
+                {
+                    DataConfigurationEvent?.Invoke(DateTime.Now, $"设置“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”）");
+                    DataPool[t.EnumKey] = state;
+                }
+            }
+        }
+
+        public virtual bool GetEnumValue<TEnum>(TEnum input) where TEnum : Enum
+        {
+            bool result = false;
+            Type enumType = typeof(TEnum);
+            string enumTypeName = enumType.FullName;
+            var t = DataEnum.FirstOrDefault(x => x.EnumTypeName == enumTypeName && x.EnumName == input.ToString());
+            if (t != null)
+            {
+                lock (_lock)
+                {
+                    result = DataPool[t.EnumKey];
+                }
+            }
+            return result;
+        }
+
         public abstract void Initialize(object thread);
 
-        /// <summary>
-        /// 主流程
-        /// </summary>
-        /// <param name="thread">派生对象</param>
         [ProductionThreadBase]
-        public abstract void Main(Thread_Auto_Base thread);
+        protected abstract void Main(Thread_Auto_Base thread);
 
-        /// <summary>
-        /// 主流程取消通知
-        /// </summary>
-        /// <param name="class_na">类名称</param>
-        /// <param name="thread">流程对象</param>
-        /// <param name="ex">取消异常</param>
-        public abstract void ThreadRestartEvent(string class_na, Thread_Auto_Base thread, ThreadAbortException ex);
+        protected abstract void ThreadRestartEvent(string class_na, Thread_Auto_Base thread, ThreadAbortException ex);
 
-        /// <summary>
-        /// 主流程异常通知
-        /// </summary>
-        /// <param name="class_na">类名称</param>
-        /// <param name="thread">流程对象</param>
-        /// <param name="exception">异常</param>
-        public abstract void ThreadError(string class_na, Thread_Auto_Base thread, Exception exception);
+        protected abstract void ThreadError(string class_na, Thread_Auto_Base thread, Exception exception);
     }
 }
