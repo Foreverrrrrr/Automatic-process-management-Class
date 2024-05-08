@@ -21,7 +21,7 @@ namespace Administration
 
         private static List<DataConfigurationBase> DataEnum = new List<DataConfigurationBase>();
 
-        private static bool[] DataPool = new bool[1024];
+        private static bool[] DataPool = new bool[65535];
 
         public static System.Collections.Generic.List<ProductionThreadBase> Auto_Th { get; private set; } = new System.Collections.Generic.List<ProductionThreadBase>();
 
