@@ -4,29 +4,45 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.Emit;
 using System.Threading;
-using System.Timers;
 using Thread_Administration;
 
 namespace Administration
 {
     public abstract class Thread_Auto_Base
     {
-        public static event Action<DateTime> NewClass_RunEvent;
+        /// <summary>
+        /// 流程线程创建事件
+        /// </summary>
+        public static event Action<DateTime, string> NewClass_RunEvent;
 
+        /// <summary>
+        /// 全局状态机日志事件
+        /// </summary>
         public static event Action<DateTime, string> DataConfigurationEvent;
 
         private static object _lock = new object();
 
+        /// <summary>
+        /// 全局状态机机枚举队列
+        /// </summary>
         private static List<DataConfigurationBase> DataEnum = new List<DataConfigurationBase>();
 
+        /// <summary>
+        /// 全局状态机数据池
+        /// </summary>
         private static bool[] DataPool = new bool[65535];
 
         public static System.Collections.Generic.List<ProductionThreadBase> Auto_Th { get; private set; } = new System.Collections.Generic.List<ProductionThreadBase>();
 
+        /// <summary>
+        /// 暂停
+        /// </summary>
         public abstract ManualResetEvent Interrupt { get; set; }
 
+        /// <summary>
+        /// 日志接口
+        /// </summary>
         public abstract event Action<DateTime, string> LogEvent;
 
         public enum Send_Variable
@@ -36,6 +52,10 @@ namespace Administration
 
         public Thread_Auto_Base() { }
 
+        /// <summary>
+        /// 流程初始化
+        /// </summary>
+        /// <param name="spintime">线程循环休眠时间</param>
         public static void NewClass(int spintime = 50)
         {
             DataStructureConfiguration(typeof(Send_Variable));
@@ -52,8 +72,8 @@ namespace Administration
                     if (t.Length > 0)
                         Thread_Configuration(derivedType.Name, method, instance, spintime);
                 }
+                NewClass_RunEvent?.Invoke(DateTime.Now, derivedType.FullName + "中自动运行线程启动");
             }
-            NewClass_RunEvent?.Invoke(DateTime.Now);
         }
 
         private static void Thread_Configuration(string class_na, MethodInfo method, object class_new, int spintime)
@@ -99,6 +119,9 @@ namespace Administration
             Auto_Th.Add(threadBase);
         }
 
+        /// <summary>
+        /// 全部流程线程销毁
+        /// </summary>
         public static void Thraead_Dispose()
         {
             if (Auto_Th != null)
@@ -116,6 +139,10 @@ namespace Administration
                 }
         }
 
+        /// <summary>
+        /// 指定流程线程销毁
+        /// </summary>
+        /// <param name="Thread_Name">线程名称</param>
         public static void Thraead_Dispose(string Thread_Name)
         {
             if (Auto_Th != null)
@@ -130,6 +157,11 @@ namespace Administration
                 }
         }
 
+        /// <summary>
+        /// 信号机枚举配置
+        /// </summary>
+        /// <param name="enum">枚举类型</param>
+        /// <exception cref="Exception"></exception>
         protected static void DataStructureConfiguration(Type @enum)
         {
             if (@enum.IsEnum)
@@ -162,7 +194,14 @@ namespace Administration
             }
         }
 
-        public virtual void AwaitEnum<TEnum>(TEnum input, bool state, int time = 0) where TEnum : Enum
+        /// <summary>
+        /// 等待全局状态机
+        /// </summary>
+        /// <typeparam name="TEnum">状态机枚举</typeparam>
+        /// <param name="input">枚举项</param>
+        /// <param name="state">等待状态值</param>
+        /// <param name="time">超时时间</param>
+        public static void AwaitEnum<TEnum>(TEnum input, bool state, int time = 0) where TEnum : Enum
         {
             Type enumType = typeof(TEnum);
             string enumTypeName = enumType.FullName;
@@ -174,7 +213,6 @@ namespace Administration
                 stopwatch.Start();
                 do
                 {
-                    this.Interrupt.WaitOne();
                     Thread.Sleep(50);
                     if (time > 0 && stopwatch.ElapsedMilliseconds > time)
                         break;
@@ -183,7 +221,42 @@ namespace Administration
             }
         }
 
-        public virtual void SetEnum<TEnum>(TEnum input, bool state) where TEnum : Enum
+        /// <summary>
+        /// 等待全局状态机
+        /// </summary>
+        /// <typeparam name="TEnum">状态机枚举</typeparam>
+        /// <param name="input">枚举项</param>
+        /// <param name="state">等待状态值</param>
+        /// <param name="manual">外部状态标志</param>
+        /// <param name="time">超时时间</param>
+        public static void AwaitEnum<TEnum>(TEnum input, bool state, ManualResetEvent manual, int time = 0) where TEnum : Enum
+        {
+            Type enumType = typeof(TEnum);
+            string enumTypeName = enumType.FullName;
+            var t = DataEnum.FirstOrDefault(x => x.EnumTypeName == enumTypeName && x.EnumName == input.ToString());
+            if (t != null)
+            {
+                DataConfigurationEvent?.Invoke(DateTime.Now, $"等待“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”");
+                Stopwatch stopwatch = new Stopwatch();
+                stopwatch.Start();
+                do
+                {
+                    manual.WaitOne();
+                    Thread.Sleep(50);
+                    if (time > 0 && stopwatch.ElapsedMilliseconds > time)
+                        break;
+                } while (DataPool[t.EnumKey] != state);
+                DataConfigurationEvent?.Invoke(DateTime.Now, $"等待“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”完成（{stopwatch.ElapsedMilliseconds}）");
+            }
+        }
+
+        /// <summary>
+        /// 设置全局状态机
+        /// </summary>
+        /// <typeparam name="TEnum">状态机枚举</typeparam>
+        /// <param name="input">枚举项</param>
+        /// <param name="state">设置状态</param>
+        public static void SetEnum<TEnum>(TEnum input, bool state) where TEnum : Enum
         {
             Type enumType = typeof(TEnum);
             string enumTypeName = enumType.FullName;
@@ -192,13 +265,19 @@ namespace Administration
             {
                 lock (_lock)
                 {
-                    DataConfigurationEvent?.Invoke(DateTime.Now, $"设置“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”）");
+                    DataConfigurationEvent?.Invoke(DateTime.Now, $"设置“{enumTypeName}”中“{input.ToString()}”信号状态为“{state}”");
                     DataPool[t.EnumKey] = state;
                 }
             }
         }
 
-        public virtual bool GetEnumValue<TEnum>(TEnum input) where TEnum : Enum
+        /// <summary>
+        /// 获取全局状态机
+        /// </summary>
+        /// <typeparam name="TEnum">状态机枚举</typeparam>
+        /// <param name="input">枚举项</param>
+        /// <returns>枚举标签状态</returns>
+        public static bool GetEnumValue<TEnum>(TEnum input) where TEnum : Enum
         {
             bool result = false;
             Type enumType = typeof(TEnum);
@@ -214,13 +293,33 @@ namespace Administration
             return result;
         }
 
+        /// <summary>
+        /// 初始化
+        /// </summary>
+        /// <param name="thread"></param>
         public abstract void Initialize(object thread);
 
+        /// <summary>
+        /// 自动运行
+        /// </summary>
+        /// <param name="thread">线程对象</param>
         [ProductionThreadBase]
         protected abstract void Main(Thread_Auto_Base thread);
 
+        /// <summary>
+        /// 线程中断重置回调
+        /// </summary>
+        /// <param name="class_na">线程类名</param>
+        /// <param name="thread">线程对象</param>
+        /// <param name="ex">异常</param>
         protected abstract void ThreadRestartEvent(string class_na, Thread_Auto_Base thread, ThreadAbortException ex);
 
+        /// <summary>
+        /// 线程异常
+        /// </summary>
+        /// <param name="class_na">流程类名称</param>
+        /// <param name="thread">线程对象</param>
+        /// <param name="exception">异常</param>
         protected abstract void ThreadError(string class_na, Thread_Auto_Base thread, Exception exception);
     }
 }

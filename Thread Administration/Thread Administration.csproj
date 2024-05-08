@@ -62,7 +62,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Auto_Thread.cs" />
+    <Compile Include="Thread_Auto_Base.cs" />
     <Compile Include="DataConfigurationBase.cs" />
     <Compile Include="ProductionThreadBase.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
