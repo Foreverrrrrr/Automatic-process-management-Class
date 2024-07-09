@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Threading;
 
-namespace Administration
+namespace Thread_Administration
 {
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
     public class ProductionThreadBase : Attribute

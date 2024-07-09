@@ -5,9 +5,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
-using Thread_Administration;
 
-namespace Administration
+namespace Thread_Administration
 {
     public abstract class Thread_Auto_Base
     {
